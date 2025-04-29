@@ -3,7 +3,7 @@
 # =============================
 # OpenVPN Foreign Server Setup Script
 # Role: Exit Gateway (Outside Iran)
-# Version: 1.3.0
+# Version: 1.4.0 (Fixed Iran Server Certificate)
 # =============================
 
 set -e
@@ -30,7 +30,7 @@ function get_ip6() {
 
 # === Step 0: Show IP info ===
 echo "======================================"
-echo "Foreign VPN Server Setup Script v1.3"
+echo "Foreign VPN Server Setup Script v1.4"
 echo "IPv4: $(get_ip4)"
 echo "IPv6: $(get_ip6)"
 echo "======================================"
@@ -69,8 +69,8 @@ EASYRSA_BATCH=1 ./easyrsa build-ca nopass
 log "Generating server certificate (foreign-server)..."
 EASYRSA_BATCH=1 ./easyrsa build-server-full foreign-server nopass
 
-log "Generating client certificate for Iran server (iran-server)..."
-EASYRSA_BATCH=1 ./easyrsa build-client-full iran-server nopass
+log "Generating server certificate for Iran server (iran-server)..."
+EASYRSA_BATCH=1 ./easyrsa build-server-full iran-server nopass
 
 log "Generating TLS auth key..."
 openvpn --genkey --secret /etc/openvpn/ta.key
