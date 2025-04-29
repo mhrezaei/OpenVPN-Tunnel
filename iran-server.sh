@@ -3,7 +3,7 @@
 # =============================
 # OpenVPN Iran Server Setup Script
 # Role: VPN Provider + Tunnel to Foreign Server
-# Version: 1.0.0
+# Version: 1.1.0
 # =============================
 
 set -e
@@ -20,7 +20,36 @@ function ask_value() {
   echo "${value:-$default}"
 }
 
-# === Step 1: Detect previous installation ===
+function get_ip4() {
+  ip -4 addr show | awk '/inet/ && $2 !~ /^127\./ {print $2; exit}' | cut -d/ -f1
+}
+
+function get_ip6() {
+  ip -6 addr show scope global | awk '/inet6/ {print $2; exit}' | cut -d/ -f1
+}
+
+# === Step 0: Show IP info ===
+echo "======================================"
+echo "Iran VPN Server Setup Script v1.1"
+echo "IPv4: $(get_ip4)"
+echo "IPv6: $(get_ip6)"
+echo "======================================"
+
+# === Step 1: Check for required key files before anything ===
+REQUIRED_FILES=(ca.crt server-ir.crt server-ir.key ta.key)
+MISSING=false
+for file in "${REQUIRED_FILES[@]}"; do
+  if [[ ! -f "/etc/openvpn/keys/$file" ]]; then
+    log "Missing required file: /etc/openvpn/keys/$file"
+    MISSING=true
+  fi
+done
+if [[ "$MISSING" == true ]]; then
+  log "Please copy all required certificate/key files before running this script."
+  exit 1
+fi
+
+# === Step 2: Detect previous installation ===
 if [[ -f /etc/openvpn/server.conf && -f /etc/openvpn/iran-to-foreign.conf ]]; then
   log "VPN configuration already exists. Skipping setup."
   echo "---------------------------"
@@ -32,38 +61,19 @@ if [[ -f /etc/openvpn/server.conf && -f /etc/openvpn/iran-to-foreign.conf ]]; th
   exit 0
 fi
 
-# === Step 2: Ask for config values ===
+# === Step 3: Ask for config values ===
 VPN_PORT=$(ask_value "Enter OpenVPN listening port" "443")
 VPN_PROTO=$(ask_value "Choose protocol for local VPN (tcp/udp)" "tcp")
 FOREIGN_SERVER_IP=$(ask_value "Enter Foreign server IP address" "1.2.3.4")
 FOREIGN_SERVER_PORT=$(ask_value "Enter port of foreign OpenVPN server" "1194")
 FOREIGN_PROTO=$(ask_value "Enter protocol to connect to foreign server" "udp")
 
-# === Step 3: Install Required Packages ===
+# === Step 4: Install Required Packages ===
 log "Installing OpenVPN, iptables, and screen..."
 apt update -y
 apt install -y openvpn iptables-persistent curl screen
 
-# === Step 4: Create directory for keys ===
-log "Creating keys directory..."
-mkdir -p /etc/openvpn/keys
-
-# === Step 5: Verify required key files ===
-REQUIRED_FILES=(ca.crt server-ir.crt server-ir.key ta.key)
-MISSING=false
-for file in "${REQUIRED_FILES[@]}"; do
-  if [[ ! -f "/etc/openvpn/keys/$file" ]]; then
-    log "Missing /etc/openvpn/keys/$file — Please copy it before running this script."
-    MISSING=true
-  fi
-done
-
-if [[ "$MISSING" == true ]]; then
-  log "Missing required files. Aborting."
-  exit 1
-fi
-
-# === Step 6: Create OpenVPN server config for clients ===
+# === Step 5: Create OpenVPN server config for clients ===
 log "Generating OpenVPN server config..."
 cat > /etc/openvpn/server.conf <<EOF
 port $VPN_PORT
@@ -91,12 +101,12 @@ log /var/log/openvpn.log
 verb 3
 EOF
 
-# === Step 7: Enable IP forwarding ===
+# === Step 6: Enable IP forwarding ===
 log "Enabling IP forwarding..."
 sysctl -w net.ipv4.ip_forward=1
 sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
 
-# === Step 8: Prepare OpenVPN client config to connect to foreign server ===
+# === Step 7: Prepare OpenVPN client config to connect to foreign server ===
 log "Generating OpenVPN client config for tunnel to foreign server..."
 cat > /etc/openvpn/iran-to-foreign.conf <<EOF
 client
@@ -117,7 +127,7 @@ remote-cert-tls server
 route-nopull
 EOF
 
-# === Step 9: Configure NAT and policy routing ===
+# === Step 8: Configure NAT and policy routing ===
 log "Configuring iptables for NAT and policy routing..."
 iptables -t nat -A POSTROUTING -s 10.7.0.0/24 -o tun1 -j MASQUERADE
 EXT_IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
@@ -130,7 +140,7 @@ ip route add default dev tun1 via 10.8.0.1 table vpnout || true
 
 netfilter-persistent save
 
-# === Step 10: Start services ===
+# === Step 9: Start services ===
 log "Starting OpenVPN client (tunnel to foreign)..."
 screen -dmS tunnel openvpn --config /etc/openvpn/iran-to-foreign.conf
 sleep 3

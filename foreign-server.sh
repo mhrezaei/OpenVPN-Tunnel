@@ -3,7 +3,7 @@
 # =============================
 # OpenVPN Foreign Server Setup Script
 # Role: Exit Gateway (Outside Iran)
-# Version: 1.0.0
+# Version: 1.3.0
 # =============================
 
 set -e
@@ -19,6 +19,21 @@ function ask_value() {
   read -rp "$prompt [$default]: " value
   echo "${value:-$default}"
 }
+
+function get_ip4() {
+  ip -4 addr show | awk '/inet/ && $2 !~ /^127\./ {print $2; exit}' | cut -d/ -f1
+}
+
+function get_ip6() {
+  ip -6 addr show scope global | awk '/inet6/ {print $2; exit}' | cut -d/ -f1
+}
+
+# === Step 0: Show IP info ===
+echo "======================================"
+echo "Foreign VPN Server Setup Script v1.3"
+echo "IPv4: $(get_ip4)"
+echo "IPv6: $(get_ip6)"
+echo "======================================"
 
 # === Step 1: Detect previous installation ===
 if [[ -f /etc/openvpn/server.conf && -d /etc/openvpn/easy-rsa ]]; then
