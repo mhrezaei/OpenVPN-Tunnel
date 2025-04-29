@@ -1,19 +1,17 @@
-#!/bin/bash
+# ==============================================
+# OpenVPN Main Setup Script
+# Version: 1.2.0
+# Author: mhrezaei (special edit for full Iran <-> Foreign Tunnel)
+# ==============================================
 
-# =============================
-# OpenVPN Auto Setup Script
-# Version: 1.1.0
-# Supported OS: Ubuntu 22.04 / 24.04
-# =============================
+#!/bin/bash
 
 set -e
 
-# Global variables
-SCRIPT_NAME="OpenVPN Auto Setup"
-SCRIPT_VERSION="1.1.0"
-DEBIAN_FRONTEND=noninteractive
+SCRIPT_NAME="OpenVPN Tunnel Setup"
+SCRIPT_VERSION="1.2.0"
 
-# Utility Functions
+# ================= Utility Functions ====================
 function get_ip4() {
   ip -4 addr | grep inet | grep -v 127.0.0.1 | awk '{print $2}' | cut -d/ -f1 | head -n1
 }
@@ -30,61 +28,51 @@ function print_header() {
   echo "======================================"
 }
 
+function handle_error() {
+  echo "[ERROR] $1"
+  exit 1
+}
+
 function ask_confirm() {
   local prompt="$1"
   read -rp "$prompt (Y/n): " confirm
   [[ "$confirm" =~ ^[Yy]$|^$ ]] && return 0 || return 1
 }
 
-function ask_value() {
-  local prompt="$1"
-  local default="$2"
-  read -rp "$prompt [$default]: " value
-  echo "${value:-$default}"
-}
-
-function check_requirements() {
-  echo "[INFO] Updating package lists..."
-  apt update -y
-  echo "[INFO] Installing required packages..."
-  apt install -y openvpn easy-rsa iptables curl net-tools gnupg lsb-release screen iproute2
-}
-
-function handle_error() {
-  echo "[ERROR] $1"
-  exit 1
-}
-
-# ========== Main Setup Flow ==========
+# ================= Main Flow =====================
 
 print_header
 
+# Check Root
+if [[ $EUID -ne 0 ]]; then
+   handle_error "This script must be run as root."
+fi
+
+# Choose Role
 echo "Choose server role to configure:"
-echo "1) Foreign Server (exit gateway)"
-echo "2) Iran Server (VPN provider + tunnel)"
-echo "3) Manage Users (create/revoke) [Foreign Server Only]"
+echo "1) Foreign Server (Exit Gateway)"
+echo "2) Iran Server (VPN Entry + Tunnel)"
+echo "3) Manage Users (Foreign Server Only)"
 read -rp "Enter your choice [1/2/3]: " choice
 
 case $choice in
   1)
-    echo "[INFO] Configuring foreign server (Exit Node)..."
+    echo "[INFO] Running Foreign Server Setup..."
     bash <(curl -fsSL https://raw.githubusercontent.com/mhrezaei/OpenVPN-Tunnel/main/foreign-server.sh)
     ;;
   2)
-    echo "[INFO] Configuring Iran server (VPN endpoint)..."
+    echo "[INFO] Running Iran Server Setup..."
     bash <(curl -fsSL https://raw.githubusercontent.com/mhrezaei/OpenVPN-Tunnel/main/iran-server.sh)
     ;;
   3)
-    echo "[INFO] Managing OpenVPN users (foreign server only)..."
-    if [[ ! -d /etc/openvpn/easy-rsa || ! -f /etc/openvpn/server.conf ]]; then
-      echo "[ERROR] OpenVPN does not appear to be installed/configured."
-      echo "Please run option 1 (Foreign Server Setup) before managing users."
-      exit 1
+    echo "[INFO] Managing OpenVPN Clients (Foreign Server Only)..."
+    if [[ ! -f /etc/openvpn/server.conf ]]; then
+      handle_error "OpenVPN server.conf not found. Please run Foreign Server setup first."
     fi
     bash <(curl -fsSL https://raw.githubusercontent.com/mhrezaei/OpenVPN-Tunnel/main/manage-client.sh)
     ;;
   *)
-    handle_error "Invalid choice. Please enter 1, 2, or 3."
+    handle_error "Invalid choice. Please enter 1, 2 or 3."
     ;;
 esac
 

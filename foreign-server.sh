@@ -1,14 +1,18 @@
-#!/bin/bash
-
-# =============================
+# ==============================================
 # OpenVPN Foreign Server Setup Script
 # Role: Exit Gateway (Outside Iran)
-# Version: 1.4.0 (Fixed Iran Server Certificate)
-# =============================
+# Version: 1.4.0 (Finalized)
+# Author: mhrezaei
+# ==============================================
+
+#!/bin/bash
 
 set -e
 
-# Utility Functions
+SCRIPT_NAME="Foreign VPN Server Setup"
+SCRIPT_VERSION="1.4.0"
+
+# === Utility Functions ===
 function log() {
   echo -e "[INFO] $1"
 }
@@ -28,14 +32,14 @@ function get_ip6() {
   ip -6 addr show scope global | awk '/inet6/ {print $2; exit}' | cut -d/ -f1
 }
 
-# === Step 0: Show IP info ===
+# === Step 0: Show Server Info ===
 echo "======================================"
-echo "Foreign VPN Server Setup Script v1.4"
+echo "$SCRIPT_NAME v$SCRIPT_VERSION"
 echo "IPv4: $(get_ip4)"
 echo "IPv6: $(get_ip6)"
 echo "======================================"
 
-# === Step 1: Detect previous installation ===
+# === Step 1: Check Previous Installation ===
 if [[ -f /etc/openvpn/server.conf && -d /etc/openvpn/easy-rsa ]]; then
   log "VPN configuration already exists. Skipping setup."
   echo "---------------------------"
@@ -45,20 +49,20 @@ if [[ -f /etc/openvpn/server.conf && -d /etc/openvpn/easy-rsa ]]; then
   exit 0
 fi
 
-# === Step 2: Ask for configuration values ===
-VPN_PORT=$(ask_value "Enter VPN port" "1194")
-VPN_PROTO=$(ask_value "Choose protocol (tcp/udp)" "udp")
+# === Step 2: Get Configuration from User ===
+VPN_PORT=$(ask_value "Enter VPN port" "443")
+VPN_PROTO=$(ask_value "Choose protocol (tcp/udp)" "tcp")
 
 # === Step 3: Install Required Packages ===
-log "Installing OpenVPN, Easy-RSA, and iptables-persistent..."
+log "Installing OpenVPN, Easy-RSA, and iptables-persistent packages..."
 apt update -y
 apt install -y openvpn easy-rsa iptables-persistent curl
 
-# === Step 4: Setup Easy-RSA ===
+# === Step 4: Setup Easy-RSA and Certificates ===
 EASYRSA_DIR=/etc/openvpn/easy-rsa
-mkdir -p $EASYRSA_DIR
-cp -r /usr/share/easy-rsa/* $EASYRSA_DIR
-cd $EASYRSA_DIR
+mkdir -p "$EASYRSA_DIR"
+cp -r /usr/share/easy-rsa/* "$EASYRSA_DIR"
+cd "$EASYRSA_DIR"
 
 log "Initializing PKI..."
 ./easyrsa init-pki
@@ -66,18 +70,19 @@ log "Initializing PKI..."
 log "Building Certificate Authority (CA)..."
 EASYRSA_BATCH=1 ./easyrsa build-ca nopass
 
-log "Generating server certificate (foreign-server)..."
+log "Building Foreign Server Certificate..."
 EASYRSA_BATCH=1 ./easyrsa build-server-full foreign-server nopass
 
-log "Generating server certificate for Iran server (iran-server)..."
+log "Building Iran Server Certificate (for tunnel)..."
 EASYRSA_BATCH=1 ./easyrsa build-server-full iran-server nopass
 
 log "Generating TLS auth key..."
 openvpn --genkey --secret /etc/openvpn/ta.key
 
 # === Step 5: Configure OpenVPN Server ===
-log "Creating OpenVPN server config file..."
+log "Configuring OpenVPN Server..."
 mkdir -p /etc/openvpn/ccd
+
 cat > /etc/openvpn/server.conf <<EOF
 port $VPN_PORT
 proto $VPN_PROTO
@@ -106,29 +111,34 @@ log /var/log/openvpn.log
 verb 3
 EOF
 
-# === Step 6: Set static IP and routing for Iran server ===
+# === Step 6: Static IP Mapping for Iran Tunnel ===
+log "Creating CCD entry for Iran server..."
 cat > /etc/openvpn/ccd/iran-server <<EOF
 ifconfig-push 10.8.0.2 10.8.0.1
 iroute 10.7.0.0 255.255.255.0
 EOF
 
-# === Step 7: Enable IP forwarding and NAT ===
+# === Step 7: Enable IP Forwarding and Setup NAT ===
 log "Enabling IP forwarding..."
 sysctl -w net.ipv4.ip_forward=1
-sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+sed -i 's/^#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf
+sysctl -p
+
+EXT_IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
+log "Detected network interface: $EXT_IFACE"
 
 log "Configuring NAT..."
-EXT_IFACE=$(ip route get 1.1.1.1 | awk '{print $5; exit}')
 iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -o $EXT_IFACE -j MASQUERADE
+iptables -t nat -A POSTROUTING -s 10.7.0.0/24 -o $EXT_IFACE -j MASQUERADE
 netfilter-persistent save
 
-# === Step 8: Start and enable OpenVPN service ===
+# === Step 8: Enable and Start OpenVPN ===
 log "Starting OpenVPN service..."
 systemctl enable openvpn@server
 systemctl restart openvpn@server
 systemctl status openvpn@server --no-pager || true
 
-# === Step 9: Provide instructions for transferring files to Iran server ===
+# === Step 9: Transfer Instructions for Iran Server ===
 log "Please copy the following files to your Iran server:"
 echo "--------------------------------------------------"
 echo "Remote: /etc/openvpn/easy-rsa/pki/ca.crt -> Iran: /etc/openvpn/keys/ca.crt"
@@ -136,7 +146,8 @@ echo "Remote: /etc/openvpn/easy-rsa/pki/issued/iran-server.crt -> Iran: /etc/ope
 echo "Remote: /etc/openvpn/easy-rsa/pki/private/iran-server.key -> Iran: /etc/openvpn/keys/server-ir.key"
 echo "Remote: /etc/openvpn/ta.key -> Iran: /etc/openvpn/keys/ta.key"
 echo "--------------------------------------------------"
-echo "Use scp or rsync to transfer. Example:"
+echo "Use scp to copy files. Example:"
 echo "scp /etc/openvpn/easy-rsa/pki/ca.crt root@IRAN_SERVER_IP:/etc/openvpn/keys/"
 echo "(Repeat for all files)"
-log "Foreign server setup completed. VPN is ready and persistent across reboots."
+
+log "Foreign Server Setup completed successfully!"
